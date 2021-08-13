@@ -33,7 +33,7 @@ void handleMessage(const char* line)
 int sonoff_report()
 {
   float vin, current, temp;
-  adc_get_current(&vin, &current, &temp);
+  adc_get_values(&vin, &current, &temp);
 
   char json[128];
   sprintf(json, "{\"uptime\":%d,"

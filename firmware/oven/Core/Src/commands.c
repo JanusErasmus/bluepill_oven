@@ -17,7 +17,7 @@ extern const sTermEntry_t stepEntry;
 
 void adcDebug(uint8_t argc, char **argv)
 {
-    adc_set_current();
+    adc_show();
 }
 
 const sTermEntry_t adcEntry =

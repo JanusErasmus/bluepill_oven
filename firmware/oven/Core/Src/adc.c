@@ -35,6 +35,10 @@ static float voltages[RUNNING_MEAN];
 static float currents[RUNNING_MEAN];
 static float temps[RUNNING_MEAN];
 
+static float raw_t = 0;
+static float raw_v = 0;
+static float raw_i = 0;
+
 static uint32_t change_tick = 0;
 static int changed = 0;
 static float current_v = 240;
@@ -42,11 +46,6 @@ static float current_i = 0;
 static float current_t = 20;
 
 void request_report(); //Request upper system to report change in voltages
-
-void adc_set_current()
-{
-    changed = 1;
-}
 
 void adc_start_dma()
 {
@@ -62,11 +61,37 @@ void adc_start_dma()
     }
 }
 
-void adc_get_current(float *v_ac, float *i_ac, float *temp)
+void adc_get_raw(float *v, float *i, float *t)
 {
-    *v_ac = current_v;
-    *i_ac = current_i;
-    *temp = current_t;
+    *v = raw_v;
+    *i = raw_i;
+    *t = raw_t;
+}
+
+void adc_get_values(float *v, float *i, float *t)
+{
+//    *v = current_v;
+//    *i = current_i;
+//    *t = current_t;
+
+    *v = raw_v * 640.5;
+    *i = raw_i * 46;
+    *t =  (raw_t * 100.0) - 273.0;
+
+}
+
+void adc_show()
+{
+    printf("V: %-.3f V ", raw_v);
+    printf("A: %-.3f V ", raw_i);
+    printf("T: %-.3f V\n", raw_t);
+
+    float v, i, t;
+    adc_get_values(&v, &i, &t);
+
+    printf("V: %-.3f V ", v);
+    printf("A: %-.3f A ", i);
+    printf("T: %-.3f C\n", t);
 }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
@@ -178,36 +203,46 @@ void adc_run()
          temps[idx] = mean_t;
          idx = (idx + 1) % RUNNING_MEAN;
 
-         float temp = 0, v_ac = 0, i_ac = 0;
+         float v = 0;
+         float i = 0;
+         float t = 0;
+
          for(int k = 0; k < RUNNING_MEAN; k++)
          {
-             v_ac += voltages[k];
-             i_ac += currents[k];
-             temp += temps[k];
+             v += voltages[k];
+             i += currents[k];
+             t += temps[k];
          }
 
-         v_ac /= RUNNING_MEAN;
-         i_ac /= RUNNING_MEAN;
-         temp /= RUNNING_MEAN;
+         v /= RUNNING_MEAN;
+         i /= RUNNING_MEAN;
+         t /= RUNNING_MEAN;
 
          //filter noise from current measurement
-         if(i_ac < 0.008)
-             i_ac = 0;
+         if(i < 0.008)
+             i = 0;
 
-         v_ac *= 640.5;
-         i_ac *= 46;
-         temp =  (temp * 100.0) - 273.0;
+         //Offset temperature
+         t += 0.004;
+
+         raw_v = v;
+         raw_i = i;
+         raw_t = t;
+
+         //Get scaled values
+         adc_get_values(&v, &i, &t);
+
 //          HAL_GPIO_WritePin(TRIGGER_GPIO_Port, TRIGGER_Pin, GPIO_PIN_RESET);
 
-         if(((current_v - 3) > v_ac) || (v_ac > (current_v + 3)))
+         if(((current_v - 5) > v) || (v > (current_v + 5)))
          {
              changed = 1;
          }
-         if(((current_i - 0.2) > i_ac) || (i_ac > (current_i + 0.2)))
+         if(((current_i - 0.2) > i) || (i > (current_i + 0.2)))
          {
              changed = 1;
          }
-         if(((current_t - 1) > temp) || (temp > (current_t + 1)))
+         if(((current_t - 1) > t) || (t > (current_t + 1)))
          {
              changed = 1;
          }
@@ -217,12 +252,13 @@ void adc_run()
              changed = 0;
              change_tick = HAL_GetTick() + 1000;
 
-             current_v = v_ac;
-             current_i = i_ac;
-             current_t = temp;
-             printf("V: %-.3f ", current_v);
-             printf("A: %-.3f ", current_i);
-             printf("T: %-.3f\n", current_t);
+             current_v = v;
+             current_i = i;
+             current_t = t;
+
+             printf("V: %-.3f ", v);
+             printf("A: %-.3f ", i);
+             printf("T: %-.3f\n", t);
          }
 
         samples_ready = 0;

@@ -42,9 +42,10 @@ void MX_ADC1_Init(void);
 /* USER CODE BEGIN Prototypes */
 void adc_run();
 void adc_start_dma();
-void adc_set_current();
+void adc_show();
 void adc_stop();
-void adc_get_current(float *v_ac, float *i_ac, float *temp);
+void adc_get_raw(float *v, float *i, float *t);
+void adc_get_values(float *v, float *i, float *t);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus
