@@ -146,4 +146,15 @@ Wire Wire Line
 	4800 3850 4300 3850
 Text HLabel 4300 3850 0    50   Input ~ 0
 ADC_CH4
+NoConn ~ 4800 4150
+NoConn ~ 4800 4050
+Wire Wire Line
+	4300 3950 4800 3950
+Text HLabel 4300 3950 0    50   Input ~ 0
+ADC_CH5
+NoConn ~ 4800 4250
+Wire Wire Line
+	4800 4350 4300 4350
+Text HLabel 4300 4350 0    50   Output ~ 0
+LED
 $EndSCHEMATC

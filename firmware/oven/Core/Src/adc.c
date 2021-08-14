@@ -26,24 +26,33 @@
 #include "Utils/utils.h"
 #include "tim.h"
 static int flag = 0;
-static uint32_t adc_buffer_0[48] = {0};
-static uint32_t adc_buffer_1[48] = {0};
+static uint32_t adc_buffer_0[50] = {0};
+static uint32_t adc_buffer_1[50] = {0};
 static int samples_ready = 0;
 static int idx = 0;
 #define RUNNING_MEAN 64
+static float exts[RUNNING_MEAN];
 static float voltages[RUNNING_MEAN];
 static float currents[RUNNING_MEAN];
 static float temps[RUNNING_MEAN];
 
+static float v_ref = 0;
+static float raw_ext = 0;
 static float raw_t = 0;
 static float raw_v = 0;
 static float raw_i = 0;
 
 static uint32_t change_tick = 0;
 static int changed = 0;
+static float current_ext = 20;
 static float current_v = 240;
 static float current_i = 0;
 static float current_t = 20;
+//float c1 = 1.009249522e-03, c2 = 2.378405444e-04, c3 = 2.019202697e-07;
+//float c1 = 1.753159443e-03, c2 = 0.5683506275e-04, c3 = 18.16478028e-07;
+float c1 = 0.8269846691e-03;
+float c2 = 2.088175627e-04;
+float c3 = 0.8055701799e-07;
 
 void request_report(); //Request upper system to report change in voltages
 
@@ -52,12 +61,12 @@ void adc_start_dma()
     if(flag)
     {
         flag = 0;
-        HAL_ADC_Start_DMA(&hadc1, adc_buffer_1, 80);  // Wait for 20 * 4 channels, 80 ADC conversions, 160 B
+        HAL_ADC_Start_DMA(&hadc1, adc_buffer_1, 100);  // Wait for 20 * 5 channels, 100 ADC conversions, 200 B
     }
     else
     {
         flag = 1;
-        HAL_ADC_Start_DMA(&hadc1, adc_buffer_0, 80);
+        HAL_ADC_Start_DMA(&hadc1, adc_buffer_0, 100);
     }
 }
 
@@ -68,27 +77,34 @@ void adc_get_raw(float *v, float *i, float *t)
     *t = raw_t;
 }
 
-void adc_get_values(float *v, float *i, float *t)
+void adc_get_values(float *ext, float *v, float *i, float *t)
 {
 //    *v = current_v;
 //    *i = current_i;
 //    *t = current_t;
 
+    *ext = (raw_ext * 100) - 273;
     *v = raw_v * 640.5;
     *i = raw_i * 46;
-    *t =  (raw_t * 100.0) - 273.0;
+
+    float ntc = (100e3 * raw_t) / (v_ref - raw_t);
+    float logR2 = log(ntc);
+    *t = (1.0 / (c1 + c2 * logR2 + c3 * logR2 * logR2 * logR2)) - 273.15;
 
 }
 
 void adc_show()
 {
+    printf("Vref: %0.3f\n", v_ref);
+    printf("E: %-.3f V ", raw_ext);
     printf("V: %-.3f V ", raw_v);
     printf("A: %-.3f V ", raw_i);
     printf("T: %-.3f V\n", raw_t);
 
-    float v, i, t;
-    adc_get_values(&v, &i, &t);
+    float ext, v, i, t;
+    adc_get_values(&ext, &v, &i, &t);
 
+    printf("E: %-.3f C ", ext);
     printf("V: %-.3f V ", v);
     printf("A: %-.3f A ", i);
     printf("T: %-.3f C\n", t);
@@ -126,6 +142,17 @@ void adc_run()
             ptr = (uint8_t*)adc_buffer_0;
         }
 
+//        //Print all voltages for debugging
+//        for(int k = 0; k < 200; )
+//        {
+//            uint16_t v = ptr[k] | (ptr[k + 1] << 8);
+//            printf("%0.3f ", (float)v * 805.664e-6);
+//            k +=2;
+//
+//            if(!(k % 10))
+//                    printf("\n");
+//        }
+
 //         diag_dump_buf(ptr, 16);
 
         uint16_t v_max = 0x00;
@@ -134,10 +161,10 @@ void adc_run()
         uint16_t i_max = 0x00;
         uint16_t i_min = 0xFFFF;
         // Calcultate Step using internal Vref
-        uint16_t mean_v_ref = 0;
-        for(int k = 0; k < 160; k += 8)
+        uint16_t mean_v_int = 0;
+        for(int k = 0; k < 200; k += 10)
         {
-            uint16_t v = ptr[k] | (ptr[k + 1] << 8);
+            uint16_t v = ptr[k + 8] | (ptr[k + 9] << 8);
             if(v < v_min)
                 v_min = v;
             if(v > v_max)
@@ -149,47 +176,52 @@ void adc_run()
             if(v > i_max)
                 i_max = v;
 
-            mean_v_ref += ptr[k + 2] | (ptr[k + 3] << 8);
+            mean_v_int += ptr[k + 2] | (ptr[k + 3] << 8);
         }
-        mean_v_ref /= 20;
-        // printf("VREF: 0x%04X\n", mean_v_ref);
+        mean_v_int /= 20;
+        //printf("VINT: 0x%04X\n", mean_v_ref);
 
         uint16_t dc = (v_min + v_max) >> 1;
         uint16_t i_dc = (i_min + i_max) >> 1;
 
 
-        float adc_step = 1.2 / (float)mean_v_ref;
+        float adc_step = 1.2 / (float)mean_v_int;
+        v_ref = 4096 * adc_step;
         float v_offset = (float)dc * adc_step;
         float i_offset = (float)i_dc * adc_step;
+        float mean_ext = 0;
         float mean_v = 0;
         float mean_t = 0;
         float mean_i = 0;
 
-         for(int k = 0; k < 160; k += 2)
+         for(int k = 0; k < 200; k += 10)
          {
-             uint16_t t = ptr[k] | (ptr[k + 1] << 8);
+             uint16_t t = ptr[k + 8] | (ptr[k + 9] << 8);
              // printf("0x%04X ", t);
              float volt = ((float)t * adc_step) - v_offset;
              // mean_vin += volt;
              mean_v += (volt * volt);
-             k += 4;
+
+             t = ptr[k] | (ptr[k + 1] << 8);
+             // printf("0x%04X ", t);
+             mean_ext += ((float)t * adc_step);
 
              // printf("%0.3f - ", volt);
-             t = ptr[k] | (ptr[k + 1] << 8);
+             t = ptr[k + 4] | (ptr[k + 5] << 8);
              // printf("0x%04X ", t);
              volt = ((float)t * adc_step) - i_offset;
              // mean_current += volt;
              mean_i += (volt * volt);
-             k += 2;
 
              // printf("%0.3f - ", volt);
-             t = ptr[k] | (ptr[k + 1] << 8);
+             t = ptr[k + 6] | (ptr[k + 7] << 8);
              // printf("0x%04X ", t);
              volt = ((float)t * adc_step);
              // printf("%0.3f\n", volt);
              mean_t += volt;
          }
 
+         mean_ext /= 20.0;
          mean_t /= 20.0;
          mean_v /= 20.0;
          mean_i /= 20.0;
@@ -198,22 +230,26 @@ void adc_run()
          mean_v = sqrtf(mean_v);
 
          //Calculate a running mean of the values
+         exts[idx] = mean_ext;
          voltages[idx] = mean_v;
          currents[idx] = mean_i;
          temps[idx] = mean_t;
          idx = (idx + 1) % RUNNING_MEAN;
 
+         float ext = 0;
          float v = 0;
          float i = 0;
          float t = 0;
 
          for(int k = 0; k < RUNNING_MEAN; k++)
          {
+             ext += exts[k];
              v += voltages[k];
              i += currents[k];
              t += temps[k];
          }
 
+         ext /= RUNNING_MEAN;
          v /= RUNNING_MEAN;
          i /= RUNNING_MEAN;
          t /= RUNNING_MEAN;
@@ -223,14 +259,16 @@ void adc_run()
              i = 0;
 
          //Offset temperature
-         t += 0.004;
+         ext += 0.085;
+         t -= 0.012;
 
+         raw_ext = ext;
          raw_v = v;
          raw_i = i;
          raw_t = t;
 
          //Get scaled values
-         adc_get_values(&v, &i, &t);
+         adc_get_values(&ext, &v, &i, &t);
 
 //          HAL_GPIO_WritePin(TRIGGER_GPIO_Port, TRIGGER_Pin, GPIO_PIN_RESET);
 
@@ -242,7 +280,11 @@ void adc_run()
          {
              changed = 1;
          }
-         if(((current_t - 1) > t) || (t > (current_t + 1)))
+         if(((current_t - 3) > t) || (t > (current_t + 3)))
+         {
+             changed = 1;
+         }
+         if(((current_ext - 3) > ext) || (ext > (current_ext + 3)))
          {
              changed = 1;
          }
@@ -252,10 +294,12 @@ void adc_run()
              changed = 0;
              change_tick = HAL_GetTick() + 1000;
 
+             current_ext = ext;
              current_v = v;
              current_i = i;
              current_t = t;
 
+             printf("E: %-.3f ", ext);
              printf("V: %-.3f ", v);
              printf("A: %-.3f ", i);
              printf("T: %-.3f\n", t);
@@ -300,10 +344,10 @@ void MX_ADC1_Init(void)
   hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.DiscontinuousConvMode = ENABLE;
-  hadc1.Init.NbrOfDiscConversion = 4;
+  hadc1.Init.NbrOfDiscConversion = 5;
   hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T3_TRGO;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 4;
+  hadc1.Init.NbrOfConversion = 5;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
     Error_Handler();
@@ -335,8 +379,16 @@ void MX_ADC1_Init(void)
   }
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_VREFINT;
+  sConfig.Channel = ADC_CHANNEL_5;
   sConfig.Rank = ADC_REGULAR_RANK_4;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_VREFINT;
+  sConfig.Rank = ADC_REGULAR_RANK_5;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -364,8 +416,9 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
     PA0-WKUP     ------> ADC1_IN0
     PA1     ------> ADC1_IN1
     PA4     ------> ADC1_IN4
+    PA5     ------> ADC1_IN5
     */
-    GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_4;
+    GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_4|GPIO_PIN_5;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
@@ -410,8 +463,9 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* adcHandle)
     PA0-WKUP     ------> ADC1_IN0
     PA1     ------> ADC1_IN1
     PA4     ------> ADC1_IN4
+    PA5     ------> ADC1_IN5
     */
-    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_4);
+    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_4|GPIO_PIN_5);
 
     /* ADC1 DMA DeInit */
     HAL_DMA_DeInit(adcHandle->DMA_Handle);

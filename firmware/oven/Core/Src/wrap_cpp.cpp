@@ -11,6 +11,7 @@
 #include "sonoff_pipe.h"
 #include "wrap_cpp.h"
 #include "adc.h"
+#include "led.h"
 
 #define UPDATE_RATE 4000 //Match the sample rate of the power monitor mean measurement
 #define REPORT_RATE 600000 // 10 min
@@ -32,19 +33,23 @@ void handleMessage(const char* line)
 
 int sonoff_report()
 {
-  float vin, current, temp;
-  adc_get_values(&vin, &current, &temp);
+  float ext, vin, current, temp;
+  adc_get_values(&ext, &vin, &current, &temp);
 
   char json[128];
   sprintf(json, "{\"uptime\":%d,"
       "\"temp\": %0.3f,"
-      "\"voltages\":[%0.3f,%0.3f,0,0]"
+      "\"voltages\":[%0.3f,%0.3f,%0.3f,0]"
       "}",
       (int)HAL_GetTick(),
-      temp,
+      ext,
       vin,
-      current
+      current,
+      temp
   );
+
+  // Ensure LED is on while TX
+  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
 
   // printf("Sonoff publish: %s\n", msg);
   if(pipe.publish(json))
@@ -54,9 +59,11 @@ int sonoff_report()
     report_tick = HAL_GetTick();
     last_report = HAL_GetTick() + REPORT_RATE;
 
+    led_idle();
     return 1;
   }
 
+  led_error();
   return 0;
 }
 
@@ -102,42 +109,18 @@ void request_report()
 
  void cpp_run()
  {
-    pipe.run();
+     pipe.run();
 
-   if(tick < HAL_GetTick())
-   {
-     tick = HAL_GetTick() + UPDATE_RATE;
-
-     float vin, current;
-     if(0)//pwr_monitor_get(&vin, &current))
+     if(tick < HAL_GetTick())
      {
+         tick = HAL_GetTick() + UPDATE_RATE;
 
-       int changed = 0;
-       if((prev_vin + 2 < vin) || (vin < prev_vin - 2))
-       {
-         changed = 1;
-       }
-       if((prev_current + 0.5 < current) || (current < prev_current - 0.5))
-       {
-         changed = 1;
-       }
-
-       if(changed)
-       {
-         //Prevent excessive reporting, by limiting to the minimum report rate
-         if(report_tick + MIN_REPORT_RATE < HAL_GetTick())
+         //report on regular intervals
+         if(last_report < HAL_GetTick())
          {
-           sonoff_report();
+             sonoff_report();
          }
-       }
-
-       //report on regular intervals
-       if(last_report < HAL_GetTick())
-       {
-         sonoff_report();
-       }
      }
-   }
  }
 
  int esp_idle()
@@ -161,6 +144,7 @@ void request_report()
 
      if(!strcmp(argv[1], "ok"))
      {
+         led_busy();
        pipe.checkOK();
      }
    }

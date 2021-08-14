@@ -36,6 +36,7 @@
 
 #include "Utils/cli.h"
 #include "wrap_cpp.h"
+#include "led.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -142,6 +143,7 @@ int main(void)
 //	      tick = HAL_GetTick() + 10;
 //	  }
 	  cpp_run();
+	  led_run();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

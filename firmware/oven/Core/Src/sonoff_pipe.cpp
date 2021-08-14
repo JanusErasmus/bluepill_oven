@@ -12,6 +12,7 @@
 #include "Utils/utils.h"
 #include "sonoff_pipe.h"
 #include "stm32f1xx_hal.h"
+#include "led.h"
 
 #define OK_CHECK_INTERVAL 60000
 
@@ -312,6 +313,7 @@ void SonoffPipe::run()
   case CHECK_OK:
     if(doIsSonoffOK() < 0)
     {
+        led_idle();
       mState = IDLE;
     }
     break;

@@ -45,7 +45,7 @@ void adc_start_dma();
 void adc_show();
 void adc_stop();
 void adc_get_raw(float *v, float *i, float *t);
-void adc_get_values(float *v, float *i, float *t);
+void adc_get_values(float *ext, float *v, float *i, float *t);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus
